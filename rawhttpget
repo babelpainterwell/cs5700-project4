@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+
+
+# PAY ATTENTION TO COMMENTING STYLES!!!
+# Modify IP Table Command: iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
+
+import argparse
+import socket 
+import urllib.parse
+from struct import *
+
+
+
+parser = argparse.ArgumentParser(description="Take URL from Command Line")
+parser.add_argument("url", type=str, help="<Mandatary> Enter the associated file's url")
+args = parser.parse_args()
+
+def get_header_info_dict(response, header_dict):
+    # this function helps collect reponse header information 
+    # Parameters:
+    #       response: the received message from the server (string)
+    #       header_dict: a dictionary used to stoed headeer information
+    # returns:
+    #       a new header_dict dictionary 
+    for line in response.strip().split("\r\n"):
+        if line.startswith("HTTP/1.1"):
+            header_dict["status_code"] = int(line.split(" ")[1])
+        elif line.startswith("Content-Length"):
+            header_dict["content_length"] = int(line.split(": ")[1])
+    return header_dict
+
+def checksum(msg):
+    s = 0
+
+    # add two byte characters at a time 
+    for i in range(0, len(msg), 2):
+        w = ord(msg[i]) + (ord(msg[i+1]) << 8)
+        s = s + w 
+    
+    # WHY DO THIS
+    s = (s >> 16) + (s & 0xffff)
+    s = s + (s >> 16)
+
+    # the resulting 32-bit value is complemented into 16 bits 
+    s = ~s & 0xffff
+
+    return s 
+
+URL = args.url 
+# REMEMBER TO DELETE THE HARDCODING PART 
+URL = "http://david.choffnes.com/classes/cs5700f22/2MB.log"
+
+
+# to get file name and host name 
+parsed_url = urllib.parse.urlparse(URL)
+HOST = parsed_url.netloc
+PATH = parsed_url.path
+FILE_NAME = ""
+
+if URL.endswith("/") or not PATH:
+    FILE_NAME = "index.html"
+else:
+    FILE_NAME = URL.split("/")[-1]
+
+
+
+def main():
+    # TCP socket (not row)
+    # client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # client_socket.connect((HOST, 80))
+
+    # header_dict = {}
+
+    # request = f"GET {URL} HTTP/1.1\r\nHost: {HOST}\r\nConnection: keep-alive\r\n\r\n"
+    # client_socket.send(bytes(request, "utf-8"))
+    # msg_bytes = client_socket.recv(16384)
+    
+    # # get status code and content length 
+    # response_body_bytes = msg_bytes.split(bytearray("\r\n\r\n","utf-8"))[1]
+    # header_bytes = msg_bytes.split(bytearray("\r\n\r\n","utf-8"))[0]
+    # header_string = header_bytes.decode("utf-8")
+    # header_dict = get_header_info_dict(header_string, header_dict)
+    # print(header_dict)
+
+    # while (len(msg_bytes.split(bytearray("\r\n\r\n", "utf-8"))[1]) < header_dict["content_length"]):
+    #     msg_bytes += client_socket.recv(16384)
+
+
+    # create two sockets for sending and receiving messages 
+    # send_socket has socket protocol socket.IPPROTO_RAW
+    # receive_socket has socket protocol socket.IPPROTO_TCP
+
+    
+
+
+    try:
+        send_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
+        receive_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
+    except socket.error as e:
+        print(e)
+        print("Socket could not be created")
+        exit()
+
+    
+    # server_address = (f"{HOST}", 80)
+    # send_socket
+
+    packet = ""
+
+    # 127.0.1.1
+    source_ip = socket.gethostbyname(socket.gethostname())
+    dest_ip = socket.gethostbyname(f"{HOST}") 
+
+
+    # IP Header Fields 
+    # WHERE IS THE FLAG FIELD?
+    ip_version = 4
+    ip_header_length = 5
+    ip_type_service = 0 # WHY?
+    ip_total_lengh = 0 # kernel will fill the correct total length 
+    ip_id = 54321 # should be a random number?
+    ip_fragment_offset = 0
+    ip_time_to_live = 255 # needs to be modified 
+    ip_protocol = socket.IPPROTO_TCP
+    ip_checksum = 0 # kernel will fill the correct checksum 
+    # convert an ip address to 32-bit packed binary representation 
+    ip_source_address = socket.inet_aton(source_ip)
+    ip_dest_address = socket.inet_aton(dest_ip)
+
+    
+
+    # combine the versio part and the header length to 1 byte/ 8 bits 
+    ip_ihl_ver = (ip_version << 4) + ip_header_length
+
+    # pack a sequence of values into bytes object
+    # Data types in the byte order:
+    #       B: unsigned 1-byte integer 
+    #       H:  unsigned 2-byte integer
+    #       4s: 4-byte string
+    # ip_source_address is byte object, not integer 
+    ip_header = pack("!BBHHHBBH4s4s", ip_ihl_ver, ip_type_service, ip_total_lengh, ip_id, ip_fragment_offset, 
+                     ip_total_lengh, ip_protocol, ip_checksum, ip_source_address, ip_dest_address)
+    
+
+
+    # TCP HEADER FIELDS 
+    tcp_source_port = 12345
+    tcp_dest_port = 80
+    tcp_sequence_number = 454 # can be a random number? 
+    tcp_acknowledgement_number = 0
+    tcp_data_offset_header_length = 5 # 4 bit field, size of tcp header
+    # tcp flags 
+    tcp_fin = 0 
+    tcp_syn = 1
+    tcp_rst = 0
+    tcp_psh = 0
+    tcp_ack = 0
+    tcp_urg = 0
+    # htons() stands for host to network short 
+    # converts a 16-bit positive integer from host byte order to network byte order 
+    tcp_window = socket.htons(5840) # maximum allowed window size 
+    tcp_checksum = 0 # will calculate a new checksum below 
+    tcp_urgent_pointer = 0
+
+    tcp_offset_res = (tcp_data_offset_header_length << 4) + 0    # now 8 bits, while Hlen should only have 4-bit space???
+    tcp_flags = tcp_fin + (tcp_syn << 1) + (tcp_rst << 2) + (tcp_psh << 3) + (tcp_ack << 4) + (tcp_urg << 5)
+    tcp_header = pack("!HHLLBBHHH", tcp_source_port, tcp_dest_port, tcp_sequence_number, tcp_acknowledgement_number, 
+                      tcp_offset_res, tcp_flags, tcp_window, tcp_checksum, tcp_urgent_pointer)
+
+
+
+    exit()
+
+
+
+
+
+
+
+
+
+
+    # Store into target file 
+    with open(f"{FILE_NAME}","wb") as target_file:
+        target_file.write(response_body_bytes)
+        print("Mission completed")
+
+
+if __name__ == "__main__":
+    main()
